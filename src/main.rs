@@ -1,21 +1,18 @@
-use std::{
-    collections::HashMap, fs::File, io::{Error, Read}, sync::Arc
-};
+use std::sync::Arc;
 
 use axum::{
     extract::Request,
-    http::StatusCode,
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Response},
-    routing::{get, get_service, post},
+    routing::{get, post},
     Router,
 };
 
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
-use tera::{Tera, Context};
+use tera::{Context, Tera};
 
 async fn trace_middleware(req: Request, next: Next) -> Result<impl IntoResponse, Response> {
     let span = tracing::info_span!("request", method = %req.method(), uri = %req.uri());
@@ -27,7 +24,7 @@ async fn trace_middleware(req: Request, next: Next) -> Result<impl IntoResponse,
 
 #[tracing::instrument]
 async fn index_page(tera: Arc<Tera>) -> Result<impl IntoResponse, Response> {
-    let mut ctx = Context::new();
+    let ctx = Context::new();
 
     let body = tera.render("index.html", &ctx).unwrap();
     Ok(Html(body))
@@ -35,14 +32,14 @@ async fn index_page(tera: Arc<Tera>) -> Result<impl IntoResponse, Response> {
 
 #[tracing::instrument]
 async fn login_page(tera: Arc<Tera>) -> Result<impl IntoResponse, Response> {
-    let mut ctx = Context::new();
+    let ctx = Context::new();
 
     let body = tera.render("login.html", &ctx).unwrap();
     Ok(Html(body))
 }
 
-async fn clickMe() -> &'static str {
-    "You clicked me!"
+async fn login() -> impl IntoResponse {
+    "Login"
 }
 
 #[tokio::main]
@@ -65,20 +62,29 @@ async fn main() {
     };
 
     let app = Router::new()
-        .route("/", get({
-            let tera = tera.clone();
-            move || index_page(tera)
-        }))
-        .route("/login", get({
-            let tera = tera.clone();
-            move || login_page(tera)
-        }))
-        .route("/login", post(clickMe))
-        // .route("/test-navigation", get(test_navigation))
+        .route(
+            "/",
+            get({
+                let tera = tera.clone();
+                move || index_page(tera)
+            }),
+        )
+        .route(
+            "/login",
+            get({
+                let tera = tera.clone();
+                move || login_page(tera)
+            }),
+        )
+        .route("/login", post(login))
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn(trace_middleware))
         .layer(cors);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await.unwrap();
+    let port = std::env::var("PORT").unwrap_or_else(|_| "6969".to_string());
+    tracing::info!("Listening on port: http://0.0.0.0:{}", port);
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
+        .await
+        .unwrap();
     axum::serve(listener, app).await.unwrap();
 }
