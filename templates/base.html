@@ -1,17 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
+<html>
+<head>
     <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
-    <script src="/static/js/script.js"></script>
+
     <script src="/static/js/htmx.min.js"></script>
-    <title>{% block title %}{{ title }} - My Site{% endblock %}</title>
-    {% block head %}{% endblock %}
-  </head>
-  <body>
-    <div id="content">
-      {% block content %}<p>Placeholder content</p>{% endblock %}
-    </div>
-  </body>
+    <script src="/static/js/script.js"></script>
+
+    <title>{% block title %}Learning Management Platform{% endblock title %}</title>
+</head>
+<body class="flex justify-center items-center min-h-screen">
+    {% block content %}
+    <!-- Default content goes here -->
+    {% endblock content %}
+  <p class="text-center text-gray-500 text-xs">
+    &copy;2024 Learning Management Platform. All rights reserved.
+  </p>
+
+</body>
 </html>
