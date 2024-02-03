@@ -2,7 +2,7 @@ use axum::{
     extract::Form,
     extract::Request,
     extract::State,
-    http::{Error, StatusCode},
+    http::StatusCode,
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Response},
@@ -110,9 +110,12 @@ async fn create_user(
 }
 
 async fn connect_to_db() -> Result<PgPool, AppError> {
-    let pool = PgPool::connect("postgres://postgres:password@localhost:5432/lms")
+    dotenvy::dotenv().expect("Failed to load .env file");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let pool = PgPool::connect(&database_url)
         .await
         .map_err(|e| AppError::DatabaseError(e))?;
+    tracing::info!("Connected to DB: {}", database_url);
     Ok(pool)
 }
 
@@ -134,6 +137,19 @@ async fn index_page(
     let body = tera.render("index.html", &ctx).unwrap();
     Ok(Html(body))
 }
+
+
+#[tracing::instrument]
+async fn index_content(
+    State(state): State<Arc<ApplicationState>>,
+) -> Result<impl IntoResponse, Response> {
+    let tera = state.tera.clone();
+    let ctx = Context::new();
+
+    let body = tera.render("index.content.html", &ctx).unwrap();
+    Ok(Html(body))
+}
+
 
 #[tracing::instrument]
 async fn login_page(
@@ -208,7 +224,6 @@ async fn seed_roles(pool: &PgPool) -> Result<(), AppError> {
         .await?;
     }
 
-    println!("Roles have been seeded.");
     Ok(())
 }
 
@@ -240,7 +255,7 @@ async fn main() {
     };
 
     match seed_roles(&db).await {
-        Ok(_) => println!("Roles have been seeded."),
+        Ok(_) => tracing::info!("Roles have been seeded."),
         Err(e) => {
             tracing::error!("Error DB Seeding Roles: {}", e);
             std::process::exit(1);
@@ -256,6 +271,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index_page))
+        .route("/index-content", get(index_content))
         .route("/login", get(login_page))
         .route("/login", post(login))
         .route("/register", get(register_page))
