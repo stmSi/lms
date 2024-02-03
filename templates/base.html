@@ -5,15 +5,18 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="/static/css/tailwind.css">
 
-    <script src="/static/js/htmx.min.js"></script>
+    <script src="/static/js/htmx.1.9.10.min.js"></script>
+    <script src="/static/js/tailwind.3.4.1.js"></script>
     <script src="/static/js/script.js"></script>
 
     <title>{% block title %}Learning Management Platform{% endblock title %}</title>
 </head>
-<body class="flex justify-center items-center min-h-screen">
-    {% block content %}
-    <!-- Default content goes here -->
-    {% endblock content %}
+<body class="min-h-screen bg-gray-200 flex flex-col justify-between">
+    <div class="flex-1 flex justify-center items-center">
+      {% block content %}
+      <!-- Default content goes here -->
+      {% endblock content %}
+    </div>
   <p class="text-center text-gray-500 text-xs">
     &copy;2024 Learning Management Platform. All rights reserved.
   </p>
