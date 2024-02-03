@@ -1,15 +1,22 @@
 use axum::{
+    async_trait,
     extract::Form,
+    extract::FromRequestParts,
     extract::Request,
     extract::State,
-    http::StatusCode,
+    http::{request::Parts, StatusCode, header},
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Router,
+    Json, RequestPartsExt, Router,
 };
-use serde::Deserialize;
+use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
+    TypedHeader,
+};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use thiserror::Error;
@@ -17,11 +24,111 @@ use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
+use once_cell::sync::Lazy;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tera::{Context, Tera};
+
+struct Keys {
+    encoding: EncodingKey,
+    decoding: DecodingKey,
+}
+
+impl Keys {
+    fn new(secret: &[u8]) -> Self {
+        Self {
+            encoding: EncodingKey::from_secret(secret),
+            decoding: DecodingKey::from_secret(secret),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct TokenData {
+    user_id: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthBody {
+    access_token: String,
+    token_type: String,
+}
+
+impl AuthBody {
+    fn new(access_token: String) -> Self {
+        Self {
+            access_token,
+            token_type: "Bearer".to_string(),
+        }
+    }
+}
+#[derive(Debug, Deserialize)]
+struct LoginAuthForm {
+    username_or_email: String,
+    password: String,
+}
+
+impl LoginAuthForm {
+    fn new(username_or_email: String, password: String) -> Self {
+        Self {
+            username_or_email,
+            password,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum AuthError {
+    WrongCredentials,
+    MissingCredentials,
+    TokenCreation,
+    InvalidToken,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for TokenData
+where
+    S: Send + Sync,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        // Extract the token from the authorization header
+        let TypedHeader(Authorization(bearer)) = parts
+            .extract::<TypedHeader<Authorization<Bearer>>>()
+            .await
+            .map_err(|_| AuthError::InvalidToken)?;
+        // Decode the user data
+        let token_data =
+            decode::<TokenData>(bearer.token(), &KEYS.decoding, &Validation::default())
+                .map_err(|_| AuthError::InvalidToken)?;
+
+        Ok(token_data.claims)
+    }
+}
+
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self {
+            AuthError::WrongCredentials => (StatusCode::UNAUTHORIZED, "Wrong credentials"),
+            AuthError::MissingCredentials => (StatusCode::BAD_REQUEST, "Missing credentials"),
+            AuthError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "Token creation error"),
+            AuthError::InvalidToken => (StatusCode::BAD_REQUEST, "Invalid token"),
+        };
+        let body = Json(json!({
+            "error": error_message,
+        }));
+        (status, body).into_response()
+    }
+}
+static KEYS: Lazy<Keys> = Lazy::new(|| {
+    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    Keys::new(secret.as_bytes())
+});
 
 #[derive(FromRow, Debug)]
 pub struct User {
-    pub id: i32,
+    pub id: i64,
     pub username: String,
     pub email: String,
     pub password_hash: String,
@@ -54,6 +161,9 @@ pub enum AppError {
 
     #[error("user not found")]
     UserNotFoundError,
+
+    #[error("user login failed")]
+    UserLoginFailedError,
 
     #[error("an unexpected error occurred")]
     UnexpectedError,
@@ -110,12 +220,14 @@ async fn create_user(
 }
 
 async fn connect_to_db() -> Result<PgPool, AppError> {
-    dotenvy::dotenv().expect("Failed to load .env file");
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    tracing::info!("Connecting to DB: {}", database_url);
     let pool = PgPool::connect(&database_url)
         .await
-        .map_err(|e| AppError::DatabaseError(e))?;
+        .map_err(AppError::DatabaseError)?;
+
     tracing::info!("Connected to DB: {}", database_url);
+
     Ok(pool)
 }
 
@@ -138,7 +250,6 @@ async fn index_page(
     Ok(Html(body))
 }
 
-
 #[tracing::instrument]
 async fn index_content(
     State(state): State<Arc<ApplicationState>>,
@@ -149,7 +260,6 @@ async fn index_content(
     let body = tera.render("index.content.html", &ctx).unwrap();
     Ok(Html(body))
 }
-
 
 #[tracing::instrument]
 async fn login_page(
@@ -190,13 +300,71 @@ async fn register(
         Ok(user) => Ok(Html(format!("User created: {:?}", user))),
         Err(e) => {
             tracing::error!("Error creating user: {}", e);
-            Err((StatusCode::BAD_REQUEST, format!("Could not create user: {}", e)).into_response())
+            Err((
+                StatusCode::BAD_REQUEST,
+                format!("Could not create user: {}", e),
+            )
+                .into_response())
         }
     }
 }
 
-async fn login(req: Request) -> impl IntoResponse {
-    "Login"
+async fn login(State(app_state): State<Arc<ApplicationState>> ,Form(form): Form<LoginAuthForm>) -> Response {
+    let username_or_email = form.username_or_email;
+    let password = form.password;
+    let pool = app_state.db.clone();
+
+    if username_or_email.is_empty() || password.is_empty() {
+        // return Err(AuthError::MissingCredentials.into());
+    }
+
+    // Check if the user exists
+    let user_result = sqlx::query_as!(
+        User,
+        "SELECT * FROM users WHERE username = $1 OR email = $2 AND password_hash = $3", 
+        &username_or_email,
+        &username_or_email,
+        &password
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Database error: {}", e);
+        e
+    });
+
+    if user_result.is_err() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Failed to login".into())
+            .unwrap();
+    }
+
+    // generate auth jwt token from user data
+    let token_data = TokenData {
+        user_id: user_result.unwrap().id,
+    };
+
+    let token = match encode(&Header::default(), &token_data, &KEYS.encoding) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("Error creating token: {}", e);
+            return Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body("Token creation error".into())
+                .unwrap();
+        }
+    };
+    let cookie = format!(
+        "Authorization={}; HttpOnly; Secure; SameSite=Strict; Path=/;",
+        token
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::SET_COOKIE, cookie)
+        .body("Logged in successfully".into())
+        .unwrap()
 }
 
 #[derive(Debug)]
@@ -229,6 +397,7 @@ async fn seed_roles(pool: &PgPool) -> Result<(), AppError> {
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().expect("Failed to load .env file");
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .init();

@@ -3,11 +3,11 @@
 ### Tech Stack
 -   [Rust](https://www.rust-lang.org/)
 -   [Axum](https://github.com/tokio-rs/axum)
--   [SQLx] (https://github.com/launchbadge/sqlx)
+-   [SQLx](https://github.com/launchbadge/sqlx)
 -   [TailwindCSS](https://tailwindcss.com/)
 -   [PostCSS](https://postcss.org/)
 -   [HTMX](https://htmx.org/)
--   [Tera] (https://github.com/Keats/tera)
+-   [Tera](https://github.com/Keats/tera)
 -   [PostgreSQL](https://www.postgresql.org/)
 
 Why? Don't ask!
