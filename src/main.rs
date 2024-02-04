@@ -1,22 +1,16 @@
 use axum::{
     async_trait,
     extract::Form,
-    extract::FromRequestParts,
-    extract::Request,
     extract::State,
-    http::{request::Parts, StatusCode, header},
+    extract::{FromRequest, Request},
+    http::{header, StatusCode},
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, RequestPartsExt, Router,
-};
-use axum_extra::{
-    headers::{authorization::Bearer, Authorization},
-    TypedHeader,
+    Json, Router,
 };
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use thiserror::Error;
@@ -24,6 +18,7 @@ use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
+use cookie::Cookie;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -46,6 +41,102 @@ impl Keys {
 #[derive(Debug, Serialize, Deserialize)]
 struct TokenData {
     user_id: i64,
+    exp: i64,
+}
+
+// pub struct AuthMiddleware;
+//
+// #[async_trait]
+// impl<B> middleware::Middleware<B> for AuthMiddleware
+// where
+//     B: Send + Sync + 'static, // Required trait bounds for Axum middleware
+// {
+//     async fn handle(
+//         &self,
+//         req: Request<B>,
+//         next: Next<B>,
+//     ) -> Result<Response, (StatusCode, &'static str)> {
+//         let headers = req.headers();
+//
+//         // Attempt to extract JWT token from cookies
+//         if let Some(cookie_header) = headers.get(axum::http::header::COOKIE) {
+//             if let Ok(cookie_str) = cookie_header.to_str() {
+//                 let jar = CookieJar::parse(cookie_str).unwrap(); // Safely handle unwrap in production
+//                 if let Some(cookie) = jar.get("Authorization") {
+//                     let token = cookie.value().strip_prefix("Bearer ").unwrap_or(""); // Safely handle unwrap in production
+//
+//                     // Decode and validate the JWT token
+//                     match decode::<Claims>(
+//                         token,
+//                         &DecodingKey::from_secret(SECRET_KEY.as_ref()),
+//                         &Validation::default(),
+//                     ) {
+//                         Ok(_) => {
+//                             // Token is valid; you can proceed or attach user information to the request
+//                         }
+//                         Err(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid token")),
+//                     }
+//                 }
+//             }
+//         }
+//
+//         next.run(req).await
+//     }
+// }
+
+#[derive(Debug)]
+struct AuthState {
+    is_authenticated: bool,
+    token_data: Option<TokenData>,
+}
+
+#[async_trait]
+impl<T> FromRequest<T> for AuthState
+where
+    T: Send + Sync, // Ensure B meets all trait bounds required by Axum for body types
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request(request: Request, _state: &T) -> Result<Self, Self::Rejection> {
+        // Attempt to extract Bearer Token from the request Cookie Authorization header
+        let failed_auth = AuthState {
+            is_authenticated: false,
+            token_data: None,
+        };
+
+        let cookie_header = match request.headers().get("Cookie") {
+            Some(c) => c,
+            None => return Ok(failed_auth),
+        };
+        let cookie_str = match cookie_header.to_str() {
+            Ok(c) => c,
+            Err(_) => return Ok(failed_auth),
+        };
+
+        tracing::debug!("cookie_header: {:?}", cookie_header);
+        let cookie = match Cookie::parse(cookie_str) {
+            Ok(c) => c,
+            Err(_) => return Ok(failed_auth),
+        };
+
+        tracing::debug!("parsed cookie: {}", cookie.value());
+        let token = match cookie.value().strip_prefix("Bearer ") {
+            Some(t) => t,
+            None => return Ok(failed_auth),
+        };
+
+        tracing::debug!("Token: {}", token);
+        let token_data = match decode::<TokenData>(token, &KEYS.decoding, &Validation::default()) {
+            Ok(td) => td,
+            Err(_) => return Ok(failed_auth),
+        };
+
+        tracing::debug!("Token data: {:?}", token_data);
+        Ok(AuthState {
+            is_authenticated: true,
+            token_data: Some(token_data.claims),
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -85,28 +176,6 @@ enum AuthError {
     InvalidToken,
 }
 
-#[async_trait]
-impl<S> FromRequestParts<S> for TokenData
-where
-    S: Send + Sync,
-{
-    type Rejection = AuthError;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Extract the token from the authorization header
-        let TypedHeader(Authorization(bearer)) = parts
-            .extract::<TypedHeader<Authorization<Bearer>>>()
-            .await
-            .map_err(|_| AuthError::InvalidToken)?;
-        // Decode the user data
-        let token_data =
-            decode::<TokenData>(bearer.token(), &KEYS.decoding, &Validation::default())
-                .map_err(|_| AuthError::InvalidToken)?;
-
-        Ok(token_data.claims)
-    }
-}
-
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
@@ -121,6 +190,7 @@ impl IntoResponse for AuthError {
         (status, body).into_response()
     }
 }
+
 static KEYS: Lazy<Keys> = Lazy::new(|| {
     let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
     Keys::new(secret.as_bytes())
@@ -242,9 +312,12 @@ async fn trace_middleware(req: Request, next: Next) -> Result<impl IntoResponse,
 #[tracing::instrument]
 async fn index_page(
     State(state): State<Arc<ApplicationState>>,
+    auth_state: AuthState,
 ) -> Result<impl IntoResponse, Response> {
     let tera = state.tera.clone();
-    let ctx = Context::new();
+    let mut ctx = Context::new();
+    ctx.insert("is_authenticated", &auth_state.is_authenticated);
+    // tracing::info!("Auth state: {:?}", auth_state.is_authenticated);
 
     let body = tera.render("index.html", &ctx).unwrap();
     Ok(Html(body))
@@ -253,9 +326,13 @@ async fn index_page(
 #[tracing::instrument]
 async fn index_content(
     State(state): State<Arc<ApplicationState>>,
+    auth_state: AuthState,
 ) -> Result<impl IntoResponse, Response> {
     let tera = state.tera.clone();
-    let ctx = Context::new();
+    let mut ctx = Context::new();
+
+    ctx.insert("is_authenticated", &auth_state.is_authenticated);
+    // tracing::info!("Auth state: {:?}", auth_state.is_authenticated);
 
     let body = tera.render("index.content.html", &ctx).unwrap();
     Ok(Html(body))
@@ -309,7 +386,10 @@ async fn register(
     }
 }
 
-async fn login(State(app_state): State<Arc<ApplicationState>> ,Form(form): Form<LoginAuthForm>) -> Response {
+async fn login(
+    State(app_state): State<Arc<ApplicationState>>,
+    Form(form): Form<LoginAuthForm>,
+) -> Response {
     let username_or_email = form.username_or_email;
     let password = form.password;
     let pool = app_state.db.clone();
@@ -321,7 +401,7 @@ async fn login(State(app_state): State<Arc<ApplicationState>> ,Form(form): Form<
     // Check if the user exists
     let user_result = sqlx::query_as!(
         User,
-        "SELECT * FROM users WHERE username = $1 OR email = $2 AND password_hash = $3", 
+        "SELECT * FROM users WHERE username = $1 OR email = $2 AND password_hash = $3",
         &username_or_email,
         &username_or_email,
         &password
@@ -343,6 +423,7 @@ async fn login(State(app_state): State<Arc<ApplicationState>> ,Form(form): Form<
     // generate auth jwt token from user data
     let token_data = TokenData {
         user_id: user_result.unwrap().id,
+        exp: 10000000000,
     };
 
     let token = match encode(&Header::default(), &token_data, &KEYS.encoding) {
@@ -356,14 +437,25 @@ async fn login(State(app_state): State<Arc<ApplicationState>> ,Form(form): Form<
         }
     };
     let cookie = format!(
-        "Authorization={}; HttpOnly; Secure; SameSite=Strict; Path=/;",
+        "Authorization=Bearer {}; HttpOnly; Secure; SameSite=Strict; Path=/;",
         token
     );
 
     Response::builder()
-        .status(StatusCode::OK)
+        .status(StatusCode::SEE_OTHER)
         .header(header::SET_COOKIE, cookie)
-        .body("Logged in successfully".into())
+        .header(header::LOCATION, "/") // Redirect to the home page
+        .body("Logged in successfully! Redirecting...".into())
+        .unwrap()
+}
+
+async fn logout_handler() -> Response {
+    let cookie = "Authorization=; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT;";
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::SET_COOKIE, cookie)
+        .header(header::LOCATION, "/") // Redirect to the home page
+        .body("Redirecting...".into())
         .unwrap()
 }
 
@@ -445,6 +537,7 @@ async fn main() {
         .route("/login", post(login))
         .route("/register", get(register_page))
         .route("/register", post(register))
+        .route("/logout", get(logout_handler))
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn(trace_middleware))
         .with_state(shared_state)

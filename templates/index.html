@@ -1,23 +1,5 @@
-{% extends "base.html" %} {% block title %}Index Page{% endblock title %} {%
-block content %}
-<div id="index-content">
-  <h3 class="text-center text-2xl font-bold mb-4">Welcome to the Index Page</h3>
-  <a
-    href="/login"
-    hx-get="/login"
-    hx-target="#index-content"
-    hx-swap="outerHTML"
-    class="block text-center text-blue-500 hover:text-blue-700 cursor-pointer"
-    >Login</a
-  >
-  <a
-    href="/register"
-    hx-get="/register"
-    hx-target="#index-content"
-    hx-swap="outerHTML"
-    class="block text-center text-blue-500 hover:text-blue-700 cursor-pointer"
-    >Register</a
-  >
-  <!-- More content specific to index.html -->
-</div>
+{% extends "base.html" %} {% block title %}Index Page{% endblock title %}
+
+{% block content %}
+  {% include 'index.content.html' %}
 {% endblock content %}
