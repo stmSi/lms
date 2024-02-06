@@ -29,8 +29,5 @@ Why? Don't ask!
 # Create a database
 sqlx database create # Make sure you have postgres running
 
-# Run the migrations
-sqlx migrate run
-
 cargo run
 ```

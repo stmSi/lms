@@ -44,46 +44,6 @@ struct TokenData {
     exp: i64,
 }
 
-// pub struct AuthMiddleware;
-//
-// #[async_trait]
-// impl<B> middleware::Middleware<B> for AuthMiddleware
-// where
-//     B: Send + Sync + 'static, // Required trait bounds for Axum middleware
-// {
-//     async fn handle(
-//         &self,
-//         req: Request<B>,
-//         next: Next<B>,
-//     ) -> Result<Response, (StatusCode, &'static str)> {
-//         let headers = req.headers();
-//
-//         // Attempt to extract JWT token from cookies
-//         if let Some(cookie_header) = headers.get(axum::http::header::COOKIE) {
-//             if let Ok(cookie_str) = cookie_header.to_str() {
-//                 let jar = CookieJar::parse(cookie_str).unwrap(); // Safely handle unwrap in production
-//                 if let Some(cookie) = jar.get("Authorization") {
-//                     let token = cookie.value().strip_prefix("Bearer ").unwrap_or(""); // Safely handle unwrap in production
-//
-//                     // Decode and validate the JWT token
-//                     match decode::<Claims>(
-//                         token,
-//                         &DecodingKey::from_secret(SECRET_KEY.as_ref()),
-//                         &Validation::default(),
-//                     ) {
-//                         Ok(_) => {
-//                             // Token is valid; you can proceed or attach user information to the request
-//                         }
-//                         Err(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid token")),
-//                     }
-//                 }
-//             }
-//         }
-//
-//         next.run(req).await
-//     }
-// }
-
 #[derive(Debug)]
 struct AuthState {
     is_authenticated: bool,
@@ -511,6 +471,14 @@ async fn main() {
         Ok(db) => db,
         Err(e) => {
             tracing::error!("Error connecting to DB: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match sqlx::migrate!().run(&db).await {
+        Ok(_) => tracing::info!("Database migration successful."),
+        Err(e) => {
+            tracing::error!("Error running migration: {}", e);
             std::process::exit(1);
         }
     };
