@@ -1,16 +1,17 @@
+mod jwt;
+use jwt::*;
 use axum::{
-    async_trait,
     extract::Form,
     extract::State,
-    extract::{FromRequest, Request},
+    extract::Request,
     http::{header, StatusCode},
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Router,
 };
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{encode, Header};
 use sqlx::{FromRow, PgPool};
 use std::sync::Arc;
 use thiserror::Error;
@@ -18,143 +19,15 @@ use thiserror::Error;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
-use cookie::Cookie;
-use once_cell::sync::Lazy;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde::Deserialize;
 use tera::{Context, Tera};
 
-struct Keys {
-    encoding: EncodingKey,
-    decoding: DecodingKey,
-}
-
-impl Keys {
-    fn new(secret: &[u8]) -> Self {
-        Self {
-            encoding: EncodingKey::from_secret(secret),
-            decoding: DecodingKey::from_secret(secret),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TokenData {
-    user_id: i64,
-    exp: i64,
-}
-
-#[derive(Debug)]
-struct AuthState {
-    is_authenticated: bool,
-    token_data: Option<TokenData>,
-}
-
-#[async_trait]
-impl<T> FromRequest<T> for AuthState
-where
-    T: Send + Sync, // Ensure B meets all trait bounds required by Axum for body types
-{
-    type Rejection = (StatusCode, &'static str);
-
-    async fn from_request(request: Request, _state: &T) -> Result<Self, Self::Rejection> {
-        // Attempt to extract Bearer Token from the request Cookie Authorization header
-        let failed_auth = AuthState {
-            is_authenticated: false,
-            token_data: None,
-        };
-
-        let cookie_header = match request.headers().get("Cookie") {
-            Some(c) => c,
-            None => return Ok(failed_auth),
-        };
-        let cookie_str = match cookie_header.to_str() {
-            Ok(c) => c,
-            Err(_) => return Ok(failed_auth),
-        };
-
-        tracing::debug!("cookie_header: {:?}", cookie_header);
-        let cookie = match Cookie::parse(cookie_str) {
-            Ok(c) => c,
-            Err(_) => return Ok(failed_auth),
-        };
-
-        tracing::debug!("parsed cookie: {}", cookie.value());
-        let token = match cookie.value().strip_prefix("Bearer ") {
-            Some(t) => t,
-            None => return Ok(failed_auth),
-        };
-
-        tracing::debug!("Token: {}", token);
-        let token_data = match decode::<TokenData>(token, &KEYS.decoding, &Validation::default()) {
-            Ok(td) => td,
-            Err(_) => return Ok(failed_auth),
-        };
-
-        tracing::debug!("Token data: {:?}", token_data);
-        Ok(AuthState {
-            is_authenticated: true,
-            token_data: Some(token_data.claims),
-        })
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct AuthBody {
-    access_token: String,
-    token_type: String,
-}
-
-impl AuthBody {
-    fn new(access_token: String) -> Self {
-        Self {
-            access_token,
-            token_type: "Bearer".to_string(),
-        }
-    }
-}
 #[derive(Debug, Deserialize)]
 struct LoginAuthForm {
     username_or_email: String,
     password: String,
 }
 
-impl LoginAuthForm {
-    fn new(username_or_email: String, password: String) -> Self {
-        Self {
-            username_or_email,
-            password,
-        }
-    }
-}
-
-#[derive(Debug)]
-enum AuthError {
-    WrongCredentials,
-    MissingCredentials,
-    TokenCreation,
-    InvalidToken,
-}
-
-impl IntoResponse for AuthError {
-    fn into_response(self) -> Response {
-        let (status, error_message) = match self {
-            AuthError::WrongCredentials => (StatusCode::UNAUTHORIZED, "Wrong credentials"),
-            AuthError::MissingCredentials => (StatusCode::BAD_REQUEST, "Missing credentials"),
-            AuthError::TokenCreation => (StatusCode::INTERNAL_SERVER_ERROR, "Token creation error"),
-            AuthError::InvalidToken => (StatusCode::BAD_REQUEST, "Invalid token"),
-        };
-        let body = Json(json!({
-            "error": error_message,
-        }));
-        (status, body).into_response()
-    }
-}
-
-static KEYS: Lazy<Keys> = Lazy::new(|| {
-    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
-    Keys::new(secret.as_bytes())
-});
 
 #[derive(FromRow, Debug)]
 pub struct User {
@@ -277,7 +150,6 @@ async fn index_page(
     let tera = state.tera.clone();
     let mut ctx = Context::new();
     ctx.insert("is_authenticated", &auth_state.is_authenticated);
-    // tracing::info!("Auth state: {:?}", auth_state.is_authenticated);
 
     let body = tera.render("index.html", &ctx).unwrap();
     Ok(Html(body))
@@ -292,7 +164,6 @@ async fn index_content(
     let mut ctx = Context::new();
 
     ctx.insert("is_authenticated", &auth_state.is_authenticated);
-    // tracing::info!("Auth state: {:?}", auth_state.is_authenticated);
 
     let body = tera.render("index.content.html", &ctx).unwrap();
     Ok(Html(body))
