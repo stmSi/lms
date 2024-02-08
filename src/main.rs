@@ -1,5 +1,12 @@
 mod jwt;
 use jwt::*;
+
+mod service_boostrap;
+use service_boostrap::*;
+
+use rand::distributions::Alphanumeric;
+use rand::Rng;
+
 use axum::{
     extract::Form,
     extract::State,
@@ -122,26 +129,6 @@ async fn create_user(
     Ok(user)
 }
 
-async fn connect_to_db() -> Result<PgPool, AppError> {
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    tracing::info!("Connecting to DB: {}", database_url);
-    let pool = PgPool::connect(&database_url)
-        .await
-        .map_err(AppError::DatabaseError)?;
-
-    tracing::info!("Connected to DB: {}", database_url);
-
-    Ok(pool)
-}
-
-async fn trace_middleware(req: Request, next: Next) -> Result<impl IntoResponse, Response> {
-    let span = tracing::info_span!("request", method = %req.method(), uri = %req.uri());
-    let _enter = span.enter();
-
-    tracing::info!("Handling request: {} {}", req.method(), req.uri());
-    Ok(next.run(req).await)
-}
-
 #[tracing::instrument]
 async fn index_page(
     State(state): State<Arc<ApplicationState>>,
@@ -191,16 +178,30 @@ async fn register_page(
     Ok(Html(body))
 }
 
+fn generate_salt(length: usize) -> String {
+    let salt: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(length)
+        .map(char::from)
+        .collect();
+    salt
+}
+
 async fn register(
     State(state): State<Arc<ApplicationState>>,
     Form(form): Form<RegisterForm>,
 ) -> Result<impl IntoResponse, Response> {
     let pool = state.db.clone();
+    // hash the password with salt
+    let salt = generate_salt(16);
+    let password_hash = argon2::hash_encoded(form.password.as_bytes(), salt.as_bytes(), &argon2::Config::default()).unwrap();
+
+    // generate salt
     match create_user(
         &pool,
         &form.username,
         &form.email,
-        &form.password,
+        &password_hash,
         "student",
     )
     .await
@@ -232,10 +233,9 @@ async fn login(
     // Check if the user exists
     let user_result = sqlx::query_as!(
         User,
-        "SELECT * FROM users WHERE username = $1 OR email = $2 AND password_hash = $3",
+        "SELECT * FROM users WHERE username = $1 OR email = $2",
         &username_or_email,
         &username_or_email,
-        &password
     )
     .fetch_one(&pool)
     .await
@@ -251,9 +251,18 @@ async fn login(
             .unwrap();
     }
 
+    let user = user_result.unwrap();
+    let matches = argon2::verify_encoded(&user.password_hash, password.as_bytes()).unwrap();
+    if !matches {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body("Failed to login".into())
+            .unwrap();
+    }
+
     // generate auth jwt token from user data
     let token_data = TokenData {
-        user_id: user_result.unwrap().id,
+        user_id: user.id,
         exp: 10000000000,
     };
 
@@ -290,32 +299,22 @@ async fn logout_handler() -> Response {
         .unwrap()
 }
 
+async fn admin_index_page(
+    State(state): State<Arc<ApplicationState>>,
+    auth_state: AuthState,
+) -> Result<impl IntoResponse, Response> {
+    let tera = state.tera.clone();
+    let mut ctx = Context::new();
+    ctx.insert("is_authenticated", &auth_state.is_authenticated);
+
+    let body = tera.render("admin/index.html", &ctx).unwrap();
+    Ok(Html(body))
+}
+
 #[derive(Debug)]
 struct ApplicationState {
     tera: Arc<Tera>,
     db: PgPool,
-}
-
-async fn seed_roles(pool: &PgPool) -> Result<(), AppError> {
-    let roles = vec![
-        "student",
-        "teacher",
-        "admin",
-        "guest",
-        "staffs",
-        "operators",
-    ];
-
-    for role in roles {
-        sqlx::query!(
-            "INSERT INTO roles (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
-            role
-        )
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -377,6 +376,8 @@ async fn main() {
         .route("/register", get(register_page))
         .route("/register", post(register))
         .route("/logout", get(logout_handler))
+
+        .route("/admin", get(admin_index_page))
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn(trace_middleware))
         .with_state(shared_state)

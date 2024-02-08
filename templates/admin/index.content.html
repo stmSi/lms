@@ -1,0 +1,27 @@
+{%block content %}
+<div id="index-content">
+  <h3 class="text-center text-2xl font-bold mb-4">Welcome to the Admin Index Page</h3>
+  {% if is_authenticated %}
+    <a href="/logout" class="block text-center text-blue-500 hover:text-blue-700">Logout</a>
+  {% else %}
+
+  <a
+    href="/login"
+    hx-get="/login"
+    hx-target="#index-content"
+    hx-swap="outerHTML"
+    class="block text-center text-blue-500 hover:text-blue-700 cursor-pointer"
+    >Login</a
+  >
+  <a
+    href="/register"
+    hx-get="/register"
+    hx-target="#index-content"
+    hx-swap="outerHTML"
+    class="block text-center text-blue-500 hover:text-blue-700 cursor-pointer"
+    >Register</a
+  >
+  {% endif %}
+  <!-- More content specific to index.html -->
+</div>
+{% endblock content %}
