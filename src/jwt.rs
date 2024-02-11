@@ -1,4 +1,4 @@
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation, errors::Result as JwtResult};
+use jsonwebtoken::{decode, DecodingKey, EncodingKey, Validation};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -7,9 +7,9 @@ use axum::async_trait;
 use axum::http::StatusCode;
 
 #[derive(Debug, Serialize, Deserialize)]
-
 pub struct TokenData {
     pub user_id: i64,
+    pub role: String,
     pub exp: i64,
 }
 
@@ -26,13 +26,13 @@ impl Keys {
         }
     }
 
-    pub fn encode(&self, token_data: &TokenData) -> JwtResult<String> {
-        encode(&Header::default(), token_data, &self.encoding)
-    }
-
-    pub fn decode(token: &str, decoding_key: &DecodingKey) -> JwtResult<jsonwebtoken::TokenData<TokenData>> {
-        decode::<TokenData>(token, decoding_key, &Validation::default())
-    }
+    // pub fn encode(&self, token_data: &TokenData) -> JwtResult<String> {
+    //     encode(&Header::default(), token_data, &self.encoding)
+    // }
+    //
+    // pub fn decode(token: &str, decoding_key: &DecodingKey) -> JwtResult<jsonwebtoken::TokenData<TokenData>> {
+    //     decode::<TokenData>(token, decoding_key, &Validation::default())
+    // }
 }
 
 pub static KEYS: Lazy<Keys> = Lazy::new(|| {
@@ -42,6 +42,7 @@ pub static KEYS: Lazy<Keys> = Lazy::new(|| {
 
 #[derive(Debug)]
 pub struct AuthState {
+    pub req: Request,
     pub is_authenticated: bool,
     pub token_data: Option<TokenData>,
 }
@@ -54,13 +55,16 @@ where
     type Rejection = (StatusCode, &'static str);
 
     async fn from_request(request: Request, _state: &T) -> Result<Self, Self::Rejection> {
+        let cookies = &request.headers().get(axum::http::header::COOKIE).cloned();
+
         // Attempt to extract Bearer Token from the request Cookie Authorization header
         let failed_auth = AuthState {
+            req: request,
             is_authenticated: false,
             token_data: None,
         };
 
-        let cookies = match request.headers().get(axum::http::header::COOKIE) {
+        let cookies = match cookies {
             Some(c) => c.to_str().unwrap(),
             None => return Ok(failed_auth),
         };
@@ -85,6 +89,7 @@ where
         };
 
         Ok(AuthState {
+            req: failed_auth.req,
             is_authenticated: true,
             token_data: Some(token_data.claims),
         })

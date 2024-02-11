@@ -10,10 +10,8 @@ use rand::Rng;
 use axum::{
     extract::Form,
     extract::State,
-    extract::Request,
     http::{header, StatusCode},
-    middleware,
-    middleware::Next,
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -103,16 +101,12 @@ async fn create_user(
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        e
-    })
-    .unwrap()
+    .map_err(AppError::DatabaseError)?
     .exists
-    .unwrap();
+    .unwrap_or(false);
 
     if user_exists {
-        return Err(AppError::UserAlreadyExistsError.into());
+        return Err(AppError::UserAlreadyExistsError);
     }
 
     let user = sqlx::query_as!(
@@ -231,9 +225,11 @@ async fn login(
     }
 
     // Check if the user exists
-    let user_result = sqlx::query_as!(
-        User,
-        "SELECT * FROM users WHERE username = $1 OR email = $2",
+    let user_result = sqlx::query!(
+        "SELECT users.id, users.username, users.email, users.password_hash, roles.name as role_name FROM users 
+        INNER JOIN roles ON users.role_id = roles.id
+        WHERE username = $1 OR email = $2
+        ",
         &username_or_email,
         &username_or_email,
     )
@@ -263,6 +259,7 @@ async fn login(
     // generate auth jwt token from user data
     let token_data = TokenData {
         user_id: user.id,
+        role: user.role_name,
         exp: 10000000000,
     };
 
@@ -317,6 +314,25 @@ struct ApplicationState {
     db: PgPool,
 }
 
+pub async fn authorize_admin_access(auth_state: AuthState, next: Next) -> Result<impl IntoResponse, Response> {
+    if !auth_state.is_authenticated {
+        return Err(Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, "/")
+            .body("Redirecting to home...".into())
+            .unwrap());
+    }
+
+    if auth_state.token_data.unwrap().role != "admin" {
+        return Err(Response::builder()
+            .status(StatusCode::SEE_OTHER)
+            .header(header::LOCATION, "/")
+            .body("Redirecting to home...".into())
+            .unwrap());
+    }
+    Ok(next.run(auth_state.req).await)
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().expect("Failed to load .env file");
@@ -368,6 +384,10 @@ async fn main() {
 
     let shared_state = Arc::new(app_state);
 
+    let admin_routes = Router::new()
+        .route("/", get(admin_index_page))
+        .layer(middleware::from_fn(authorize_admin_access));
+
     let app = Router::new()
         .route("/", get(index_page))
         .route("/index-content", get(index_content))
@@ -377,7 +397,7 @@ async fn main() {
         .route("/register", post(register))
         .route("/logout", get(logout_handler))
 
-        .route("/admin", get(admin_index_page))
+        .nest("/admin", admin_routes)
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn(trace_middleware))
         .with_state(shared_state)

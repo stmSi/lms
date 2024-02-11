@@ -12,14 +12,18 @@
     <title>{% block title %}Admin Dashboard - Learning Management Platform{% endblock title %}</title>
 </head>
 <body class="min-h-screen bg-gray-200 flex flex-col justify-between">
-    <header class="bg-white shadow">
-      <div class="container mx-auto flex justify-between items-center py-4">
-        <a href="/admin" class="text-2xl font-bold">Admin Dashboard - LMS</a>
+    <!-- Sidebar -->
+    <div class="bg-gray-800 text-gray-100 w-64 space-y-6 py-7 px-2 absolute inset-y-0 left-0 transform -translate-x-full md:relative md:translate-x-0 transition duration-200 ease-in-out">
+        <!-- Logo or Brand Name -->
+        <a href="/admin" class="text-white text-2xl font-semibold">Admin Dashboard</a>
+        <!-- Navigation -->
         <nav>
-          <a href="/courses" class="text-gray-500 hover:text-gray-900">Courses</a>
+            <a href="/admin/courses" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 hover:text-white">Courses</a>
+            <a href="/admin/users" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 hover:text-white">Users</a>
+            <a href="/admin/settings" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 hover:text-white">Settings</a>
+            <a href="/logout" class="block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 hover:text-white">Logout</a>
         </nav>
-      </div>
-    </header>
+    </div>
     <div class="flex-1 flex justify-center items-center">
       {% block content %}
       <!-- Default content goes here -->
