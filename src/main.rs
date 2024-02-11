@@ -33,6 +33,7 @@ struct LoginAuthForm {
     password: String,
 }
 
+// ---- Database Models ----
 
 #[derive(FromRow, Debug)]
 pub struct User {
@@ -48,6 +49,98 @@ pub struct Role {
     pub id: i32,
     pub name: String,
 }
+
+#[derive(Deserialize, Debug, FromRow)]
+pub struct TeacherDetail {
+    pub user_id: i64,
+    pub additional_info: Option<String>, // Change to Option<String> if the additional_info can be NULL
+}
+
+// StudentDetail struct corresponds to the student_details table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct StudentDetail {
+    pub user_id: i64,
+    pub enrollment_info: Option<String>, // Change to Option<String> if the enrollment_info can be NULL
+}
+
+// Class struct corresponds to the classes table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct Class {
+    pub class_id: i32,
+    pub title: String,
+    pub user_id: i32,
+}
+
+// StudentClassEnrollment struct corresponds to the student_classes_enrollment table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct StudentClassEnrollment {
+    pub enrollment_id: i32,
+    pub class_id: i32,
+    pub user_id: i64,
+}
+
+// Assignment struct corresponds to the assignments table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct Assignment {
+    pub assignment_id: i32,
+    pub title: String,
+    pub description: String,
+    pub class_id: i32,
+}
+
+// AssignmentQuestion struct corresponds to the assignment_questions table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct AssignmentQuestion {
+    pub question_id: i32,
+    pub assignment_id: i32,
+    pub question_text: String,
+}
+
+// AssignmentAnswer struct corresponds to the assignment_answers table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct AssignmentAnswer {
+    pub answer_id: i32,
+    pub question_id: i32,
+    pub user_id: i64,
+    pub answer_text: String,
+}
+
+// Exam struct corresponds to the exams table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct Exam {
+    pub exam_id: i32,
+    pub title: String,
+    pub class_id: i32,
+    pub timer: std::time::Duration,
+    pub marking_schema: Option<String>, // Change to Option<String> if the marking_schema can be NULL
+}
+
+// StudentExam struct corresponds to the student_exams table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct StudentExam {
+    pub student_exam_id: i32,
+    pub exam_id: i32,
+    pub user_id: i64,
+    pub score: Option<f64>, // Change to Option<f64> if the score can be NULL
+}
+
+// StudentPortfolio struct corresponds to the student_portfolio table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct StudentPortfolio {
+    pub portfolio_id: i32,
+    pub user_id: i64,
+    pub content_html_or_markdown: Option<String>, // Change to Option<String> if the content can be NULL
+}
+
+// TeacherPortfolio struct corresponds to the teacher_portfolio table in the database
+#[derive(Deserialize, Debug, FromRow)]
+pub struct TeacherPortfolio {
+    pub portfolio_id: i32,
+    pub user_id: i64,
+    pub content_html_or_markdown: Option<String>, // Change to Option<String> if the content can be NULL
+}
+
+// --- Database Models End ---
 
 #[derive(Deserialize)]
 pub struct RegisterForm {

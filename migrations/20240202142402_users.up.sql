@@ -12,3 +12,17 @@ CREATE TABLE users (
     role_id INTEGER NOT NULL,
     FOREIGN KEY (role_id) REFERENCES roles(id)
 );
+
+-- Teacher Details (additional information for teachers)
+CREATE TABLE teacher_details (
+    user_id BIGINT NOT NULL,
+    additional_info TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Student Details (additional information for students)
+CREATE TABLE student_details (
+    user_id BIGINT NOT NULL,
+    enrollment_info TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
